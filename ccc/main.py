@@ -33,7 +33,7 @@ logger.addHandler(handler)
 
 PROMPTS_FILE = Path(config['DEFAULT']['prompts_file'])
 
-def dispatch_prompt(prompt_id):
+def dispatch_prompt(prompt_id, app):
     """
     Dispatches a prompt to the Claude Code CLI.
     """
@@ -43,6 +43,7 @@ def dispatch_prompt(prompt_id):
         logger.error(f"Prompt with id {prompt_id} not found.")
         return
 
+    app.query_one("#loading_indicator").styles.display = "block"
     logger.info(f"Dispatching prompt: {prompt['prompt']}")
     try:
         # Assuming 'claude' is in the system's PATH
@@ -52,14 +53,17 @@ def dispatch_prompt(prompt_id):
         logger.info(f"Received response: {response}")
 
         if prompt.get("next_prompt_id"):
-            dispatch_prompt(prompt["next_prompt_id"])
+            dispatch_prompt(prompt["next_prompt_id"], app)
 
     except FileNotFoundError:
         logger.error("The 'claude' command was not found.")
         logger.error("Please ensure the Claude Code CLI is installed and in your PATH.")
+        logger.error("You can install it by following the instructions here: https://docs.anthropic.com/claude/docs/claude-code-cli")
     except subprocess.CalledProcessError as e:
         logger.error(f"Error calling Claude Code CLI: {e}")
         logger.error(f"Stderr: {e.stderr}")
+    finally:
+        app.query_one("#loading_indicator").styles.display = "none"
 
 
 def load_prompts():
@@ -129,17 +133,17 @@ def edit_prompt(prompt_index, new_prompt_text, new_schedule_text):
 from croniter import croniter
 import datetime
 
-def run_and_reschedule(prompt_id, schedule_text):
+def run_and_reschedule(prompt_id, schedule_text, app):
     """
     Runs a prompt and reschedules it.
     """
-    dispatch_prompt(prompt_id)
+    dispatch_prompt(prompt_id, app)
     base = datetime.datetime.now()
     iter = croniter(schedule_text, base)
     next_run = iter.get_next(datetime.datetime)
-    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt_id, schedule_text)
+    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt_id, schedule_text, app)
 
-def schedule_prompts():
+def schedule_prompts(app):
     """
     Schedules all prompts from the prompts file.
     """
@@ -155,24 +159,24 @@ def schedule_prompts():
                     base = datetime.datetime.now()
                     iter = croniter(schedule_text, base)
                     next_run = iter.get_next(datetime.datetime)
-                    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt["id"], schedule_text)
+                    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt["id"], schedule_text, app)
                 else:
                     # Fallback to simple schedule parsing for now
                     if "every" in schedule_text and "minute" in schedule_text:
-                         schedule.every().minute.do(dispatch_prompt, prompt_id=prompt["id"])
+                         schedule.every().minute.do(dispatch_prompt, prompt_id=prompt["id"], app=app)
 
-def main():
+def main(app):
     """
     Main function to run the scheduler.
     """
-    schedule_prompts()
+    schedule_prompts(app)
 
     while True:
         schedule.run_pending()
         time.sleep(1)
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, DataTable, Button, Input, Label, TabbedContent, TabPane
+from textual.widgets import Header, Footer, DataTable, Button, Input, Label, TabbedContent, TabPane, LoadingIndicator
 from textual.containers import Container
 from textual.screen import ModalScreen
 
@@ -181,7 +185,8 @@ class ConversationScreen(ModalScreen):
 
     def __init__(self, conversation_id=None):
         super().__init__()
-        self.conversation_id = conversation_id
+        self.conversation_id = conversation_id if conversation_id else str(uuid.uuid4())
+        self.prompts = []
 
     def compose(self) -> ComposeResult:
         yield Container(
@@ -192,6 +197,39 @@ class ConversationScreen(ModalScreen):
             Button("Cancel", id="cancel_conversation"),
             id="conversation_dialog",
         )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "add_prompt_to_conversation":
+            prompt_input = self.query_one(Input)
+            prompt_text = prompt_input.value
+            if prompt_text:
+                self.prompts.append({"prompt": prompt_text, "schedule": ""})
+                self.update_conversation_table()
+                prompt_input.value = ""
+        elif event.button.id == "save_conversation":
+            self.save_conversation()
+            self.dismiss()
+        elif event.button.id == "cancel_conversation":
+            self.dismiss()
+
+    def update_conversation_table(self):
+        table = self.query_one("#conversation_table")
+        table.clear()
+        for prompt in self.prompts:
+            table.add_row(prompt["prompt"])
+
+    def save_conversation(self):
+        # This is a simplified save function. A more robust implementation
+        # would handle editing existing conversations.
+        for i, prompt_data in enumerate(self.prompts):
+            is_first = i == 0
+            next_prompt_id = self.prompts[i + 1]["id"] if i + 1 < len(self.prompts) else None
+            add_prompt(
+                prompt_data["prompt"],
+                "", # No schedule for prompts in a conversation for now
+                conversation_id=self.conversation_id,
+                next_prompt_id=next_prompt_id,
+            )
 
 class EditScreen(ModalScreen):
     """A modal screen for editing a prompt."""
@@ -239,6 +277,7 @@ class CCC_TUI(App):
             Button("Manage Conversations", id="manage_conversations"),
         )
         yield Footer()
+        yield LoadingIndicator(id="loading_indicator", style="display: none;")
         yield Label("Status: Ready", id="status")
 
     def on_mount(self) -> None:
@@ -327,17 +366,34 @@ class CCC_TUI(App):
 
 import threading
 
-def run_scheduler():
+def run_scheduler(app):
     """
     Target function for the scheduler thread.
     """
-    main()
+    main(app)
+
+def show_welcome_message():
+    """
+    Shows a welcome message to new users.
+    """
+    if not Path(".onboarding_complete").exists():
+        # This is a simplified welcome message. A more robust implementation
+        # could use a dedicated screen.
+        print("Welcome to the Claude Code Companion!")
+        print("This application allows you to schedule prompts to be sent to Claude Code.")
+        print("You can add, edit, and delete prompts using the TUI.")
+        print("You can also create conversational workflows by chaining prompts together.")
+        print("Enjoy!")
+        Path(".onboarding_complete").touch()
 
 if __name__ == "__main__":
+    show_welcome_message()
+
+    app = CCC_TUI()
+
     # Run the scheduler in a background thread
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread = threading.Thread(target=run_scheduler, args=(app,), daemon=True)
     scheduler_thread.start()
 
     # Run the TUI
-    app = CCC_TUI()
     app.run()
