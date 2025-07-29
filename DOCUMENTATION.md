@@ -14,12 +14,15 @@ These two components run in separate threads, allowing the user to interact with
 
 ## Current Features
 
-- **Scheduling:** Schedule prompts using a simple, human-readable format (e.g., `daily at 14:30`).
-- **TUI Management:** A comprehensive TUI for managing prompts, including:
+- **Scheduling:** Schedule prompts using cron-style expressions for precise timing.
+- **Conversational Workflows:** Chain prompts together to create complex, stateful conversations with Claude.
+- **TUI Management:** A comprehensive TUI for managing prompts and conversations, including:
     - **Adding:** Add new prompts with a prompt text and schedule.
     - **Editing:** Modify existing prompts in a modal dialog.
     - **Deleting:** Remove prompts from the schedule.
+    - **Conversation Management:** A dedicated screen for creating and managing conversations.
 - **Logging:** All responses from the Claude Code CLI are logged to `responses.log` with a timestamp.
+- **Configuration:** A configuration file for managing settings like API keys and file paths.
 - **Extensibility:** The modular design allows for easy addition of new features.
 
 ## Planned Features

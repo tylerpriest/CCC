@@ -172,17 +172,24 @@ def main():
         time.sleep(1)
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, DataTable, Button, Input, Label
+from textual.widgets import Header, Footer, DataTable, Button, Input, Label, TabbedContent, TabPane
 from textual.containers import Container
 from textual.screen import ModalScreen
 
 class ConversationScreen(ModalScreen):
     """A modal screen for managing conversations."""
 
+    def __init__(self, conversation_id=None):
+        super().__init__()
+        self.conversation_id = conversation_id
+
     def compose(self) -> ComposeResult:
         yield Container(
             DataTable(id="conversation_table"),
-            Button("New Conversation", id="new_conversation"),
+            Input(placeholder="Enter new prompt..."),
+            Button("Add Prompt to Conversation", id="add_prompt_to_conversation"),
+            Button("Save Conversation", id="save_conversation"),
+            Button("Cancel", id="cancel_conversation"),
             id="conversation_dialog",
         )
 
@@ -220,15 +227,16 @@ class CCC_TUI(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield Header()
-        yield Container(
-            DataTable(id="prompts_table"),
-            DataTable(id="queue_table",),
-            VerticalScroll(
-                Input(placeholder="Enter new prompt..."),
-                Input(placeholder="Enter schedule (e.g., 'every_minute')"),
-                Button("Add Prompt", id="add_prompt"),
-                Button("Manage Conversations", id="manage_conversations"),
-            ),
+        with TabbedContent():
+            with TabPane("Prompts", id="prompts_tab"):
+                yield DataTable(id="prompts_table")
+            with TabPane("Queue", id="queue_tab"):
+                yield DataTable(id="queue_table")
+        yield VerticalScroll(
+            Input(placeholder="Enter new prompt..."),
+            Input(placeholder="Enter schedule (e.g., 'every_minute')"),
+            Button("Add Prompt", id="add_prompt"),
+            Button("Manage Conversations", id="manage_conversations"),
         )
         yield Footer()
         yield Label("Status: Ready", id="status")
