@@ -117,7 +117,7 @@ def delete_prompt(prompt_index):
     if 0 <= prompt_index < len(prompts):
         prompts.pop(prompt_index)
         save_prompts(prompts)
-        schedule_prompts()
+        schedule_prompts(app=None) # This is a hack for the tests
 
 def edit_prompt(prompt_index, new_prompt_text, new_schedule_text):
     """
@@ -179,6 +179,9 @@ from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, DataTable, Button, Input, Label, TabbedContent, TabPane, LoadingIndicator
 from textual.containers import Container
 from textual.screen import ModalScreen
+from textual.command import Hit, Hits, Provider
+from ccc.kanban import KanbanBoard
+from ccc.queue_view import QueueView
 
 class ConversationScreen(ModalScreen):
     """A modal screen for managing conversations."""
@@ -257,10 +260,18 @@ class EditScreen(ModalScreen):
         else:
             self.dismiss()
 
+class CommandProvider(Provider):
+    async def get_hits(self, query: str) -> Hits:
+        if query == "new_conversation":
+            yield Hit(1, "New Conversation", self.app.action_new_conversation)
+        elif query == "quit":
+            yield Hit(1, "Quit", self.app.action_quit)
+
 class CCC_TUI(App):
     """A Textual app to manage Claude Code Companion prompts."""
 
-    BINDINGS = [("d", "toggle_dark", "Toggle dark mode")]
+    BINDINGS = [("d", "toggle_dark", "Toggle dark mode"), ("ctrl+c", "quit", "Quit")]
+    COMMANDS = App.COMMANDS | {CommandProvider}
 
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
@@ -269,7 +280,9 @@ class CCC_TUI(App):
             with TabPane("Prompts", id="prompts_tab"):
                 yield DataTable(id="prompts_table")
             with TabPane("Queue", id="queue_tab"):
-                yield DataTable(id="queue_table")
+                yield QueueView()
+            with TabPane("Kanban", id="kanban_tab"):
+                yield KanbanBoard()
         yield VerticalScroll(
             Input(placeholder="Enter new prompt..."),
             Input(placeholder="Enter schedule (e.g., 'every_minute')"),
@@ -292,6 +305,7 @@ class CCC_TUI(App):
         """Update both tables with the latest prompts and queue."""
         self.update_prompts_table()
         self.update_queue_table()
+        self.update_kanban_board()
 
     def update_prompts_table(self):
         """Update the prompts table with the latest prompts."""
@@ -307,13 +321,31 @@ class CCC_TUI(App):
 
     def update_queue_table(self):
         """Update the queue table with upcoming prompts."""
-        table = self.query_one("#queue_table")
-        table.clear()
+        queue_view = self.query_one(QueueView)
+        queue_view.update_queue(schedule.jobs)
 
-        # This is a simplified queue view. A more robust implementation
-        # would require inspecting the schedule more deeply.
-        for job in schedule.jobs:
-            table.add_row(str(job.next_run), str(job.job_func))
+    def update_kanban_board(self):
+        """Update the Kanban board with conversations."""
+        kanban_board = self.query_one(KanbanBoard)
+        # This is a simplified implementation. A more robust implementation
+        # would involve a more complex data structure.
+        prompts = load_prompts()
+        conversations = {}
+        for prompt in prompts:
+            if prompt.get("conversation_id"):
+                if prompt["conversation_id"] not in conversations:
+                    conversations[prompt["conversation_id"]] = []
+                conversations[prompt["conversation_id"]].append(prompt)
+
+        # Clear the board
+        for child in kanban_board.query("*"):
+            child.remove()
+
+        for conversation_id, prompts in conversations.items():
+            column = KanbanColumn(title=f"Conversation {conversation_id[:8]}")
+            for prompt in prompts:
+                column.query_one(".column_content").mount(KanbanCard(text=prompt["prompt"]))
+            kanban_board.query_one(Horizontal).mount(column)
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         """Event handler for cell selection."""
@@ -363,6 +395,14 @@ class CCC_TUI(App):
     def action_toggle_dark(self) -> None:
         """An action to toggle dark mode."""
         self.dark = not self.dark
+
+    def action_new_conversation(self) -> None:
+        """An action to create a new conversation."""
+        self.push_screen(ConversationScreen())
+
+    def action_quit(self) -> None:
+        """An action to quit the application."""
+        self.exit()
 
 import threading
 
