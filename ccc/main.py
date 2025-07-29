@@ -56,6 +56,7 @@ def add_prompt(prompt_text, schedule_text):
     prompts = load_prompts()
     prompts.append({"prompt": prompt_text, "schedule": schedule_text})
     save_prompts(prompts)
+    schedule_prompts()
 
 def list_prompts():
     """
@@ -71,6 +72,7 @@ def delete_prompt(prompt_index):
     if 0 <= prompt_index < len(prompts):
         prompts.pop(prompt_index)
         save_prompts(prompts)
+        schedule_prompts()
 
 def edit_prompt(prompt_index, new_prompt_text, new_schedule_text):
     """
@@ -81,16 +83,39 @@ def edit_prompt(prompt_index, new_prompt_text, new_schedule_text):
         prompts[prompt_index]["prompt"] = new_prompt_text
         prompts[prompt_index]["schedule"] = new_schedule_text
         save_prompts(prompts)
+        schedule_prompts()
+
+from croniter import croniter
+import datetime
+
+def run_and_reschedule(prompt_text, schedule_text):
+    """
+    Runs a prompt and reschedules it.
+    """
+    dispatch_prompt(prompt_text)
+    base = datetime.datetime.now()
+    iter = croniter(schedule_text, base)
+    next_run = iter.get_next(datetime.datetime)
+    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt_text, schedule_text)
 
 def schedule_prompts():
     """
     Schedules all prompts from the prompts file.
     """
+    schedule.clear()
     prompts = load_prompts()
     for prompt in prompts:
-        # Simple scheduling for now, will be expanded
-        if prompt.get("schedule") == "every_minute":
-            schedule.every().minute.do(dispatch_prompt, prompt_text=prompt["prompt"])
+        schedule_text = prompt.get("schedule")
+        if schedule_text:
+            if croniter.is_valid(schedule_text):
+                base = datetime.datetime.now()
+                iter = croniter(schedule_text, base)
+                next_run = iter.get_next(datetime.datetime)
+                schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt["prompt"], schedule_text)
+            else:
+                # Fallback to simple schedule parsing for now
+                if "every" in schedule_text and "minute" in schedule_text:
+                     schedule.every().minute.do(dispatch_prompt, prompt_text=prompt["prompt"])
 
 def main():
     """
@@ -103,12 +128,12 @@ def main():
         time.sleep(1)
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, DataTable, Button, Input
+from textual.widgets import Header, Footer, DataTable, Button, Input, Label
 from textual.containers import Container
 from textual.screen import ModalScreen
 
 class EditScreen(ModalScreen):
-    """Screen with a dialog to edit a prompt."""
+    """A modal screen for editing a prompt."""
 
     def __init__(self, prompt_index, prompt_text, schedule_text) -> None:
         super().__init__()
@@ -141,27 +166,34 @@ class CCC_TUI(App):
     def compose(self) -> ComposeResult:
         """Create child widgets for the app."""
         yield Header()
-        yield Footer()
-from textual.containers import VerticalScroll
-
         yield Container(
-            DataTable(),
+            DataTable(id="prompts_table"),
+            DataTable(id="queue_table",),
             VerticalScroll(
                 Input(placeholder="Enter new prompt..."),
                 Input(placeholder="Enter schedule (e.g., 'every_minute')"),
                 Button("Add Prompt", id="add_prompt"),
             ),
         )
+        yield Footer()
+        yield Label("Status: Ready", id="status")
 
     def on_mount(self) -> None:
         """Called when the app is mounted."""
-        table = self.query_one(DataTable)
-        table.add_columns("Prompt", "Schedule", "Actions")
-        self.update_table()
+        prompts_table = self.query_one("#prompts_table")
+        prompts_table.add_columns("Prompt", "Schedule", "Actions")
+        queue_table = self.query_one("#queue_table")
+        queue_table.add_columns("Next Run", "Prompt")
+        self.update_tables()
 
-    def update_table(self):
-        """Update the table with the latest prompts."""
-        table = self.query_one(DataTable)
+    def update_tables(self):
+        """Update both tables with the latest prompts and queue."""
+        self.update_prompts_table()
+        self.update_queue_table()
+
+    def update_prompts_table(self):
+        """Update the prompts table with the latest prompts."""
+        table = self.query_one("#prompts_table")
         table.clear()
         prompts = list_prompts()
         for i, prompt in enumerate(prompts):
@@ -171,6 +203,16 @@ from textual.containers import VerticalScroll
                 f"[link=edit:{i}]Edit[/link] | [link=delete:{i}]Delete[/link]",
             )
 
+    def update_queue_table(self):
+        """Update the queue table with upcoming prompts."""
+        table = self.query_one("#queue_table")
+        table.clear()
+
+        # This is a simplified queue view. A more robust implementation
+        # would require inspecting the schedule more deeply.
+        for job in schedule.jobs:
+            table.add_row(str(job.next_run), str(job.job_func))
+
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         """Event handler for cell selection."""
         if event.cell_key.column_key == "Actions":
@@ -178,7 +220,8 @@ from textual.containers import VerticalScroll
             index = int(index_str)
             if action == "delete":
                 delete_prompt(index)
-                self.update_table()
+                self.update_tables()
+                self.notify("Prompt deleted successfully.")
             elif action == "edit":
                 prompts = list_prompts()
                 prompt_to_edit = prompts[index]
@@ -192,7 +235,12 @@ from textual.containers import VerticalScroll
         if result:
             index, prompt_text, schedule_text = result
             edit_prompt(index, prompt_text, schedule_text)
-            self.update_table()
+            self.update_tables()
+            self.notify("Prompt updated successfully.")
+
+    def notify(self, message: str):
+        """Display a notification in the footer."""
+        self.query_one(Footer).query_one(Label).update(message)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Event handler called when a button is pressed."""
@@ -203,9 +251,10 @@ from textual.containers import VerticalScroll
             schedule_text = schedule_input.value
             if prompt_text and schedule_text:
                 add_prompt(prompt_text, schedule_text)
-                self.update_table()
+                self.update_tables()
                 prompt_input.value = ""
                 schedule_input.value = ""
+                self.notify("Prompt added successfully.")
 
     def action_toggle_dark(self) -> None:
         """An action to toggle dark mode."""
