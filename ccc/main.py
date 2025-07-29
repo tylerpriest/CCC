@@ -33,17 +33,27 @@ logger.addHandler(handler)
 
 PROMPTS_FILE = Path(config['DEFAULT']['prompts_file'])
 
-def dispatch_prompt(prompt_text):
+def dispatch_prompt(prompt_id):
     """
     Dispatches a prompt to the Claude Code CLI.
     """
-    logger.info(f"Dispatching prompt: {prompt_text}")
+    prompts = load_prompts()
+    prompt = next((p for p in prompts if p["id"] == prompt_id), None)
+    if not prompt:
+        logger.error(f"Prompt with id {prompt_id} not found.")
+        return
+
+    logger.info(f"Dispatching prompt: {prompt['prompt']}")
     try:
         # Assuming 'claude' is in the system's PATH
-        result = subprocess.run(['claude', 'code', '-p', prompt_text],
+        result = subprocess.run(['claude', 'code', '-p', prompt['prompt']],
                                 capture_output=True, text=True, check=True)
         response = result.stdout
         logger.info(f"Received response: {response}")
+
+        if prompt.get("next_prompt_id"):
+            dispatch_prompt(prompt["next_prompt_id"])
+
     except FileNotFoundError:
         logger.error("The 'claude' command was not found.")
         logger.error("Please ensure the Claude Code CLI is installed and in your PATH.")
@@ -71,12 +81,21 @@ def save_prompts(prompts):
         for prompt in prompts:
             f.write(json.dumps(prompt) + "\n")
 
-def add_prompt(prompt_text, schedule_text):
+import uuid
+
+def add_prompt(prompt_text, schedule_text, conversation_id=None, next_prompt_id=None):
     """
     Adds a new prompt to the prompts file.
     """
     prompts = load_prompts()
-    prompts.append({"prompt": prompt_text, "schedule": schedule_text})
+    prompt_id = str(uuid.uuid4())
+    prompts.append({
+        "id": prompt_id,
+        "prompt": prompt_text,
+        "schedule": schedule_text,
+        "conversation_id": conversation_id,
+        "next_prompt_id": next_prompt_id,
+    })
     save_prompts(prompts)
     schedule_prompts()
 
@@ -110,15 +129,15 @@ def edit_prompt(prompt_index, new_prompt_text, new_schedule_text):
 from croniter import croniter
 import datetime
 
-def run_and_reschedule(prompt_text, schedule_text):
+def run_and_reschedule(prompt_id, schedule_text):
     """
     Runs a prompt and reschedules it.
     """
-    dispatch_prompt(prompt_text)
+    dispatch_prompt(prompt_id)
     base = datetime.datetime.now()
     iter = croniter(schedule_text, base)
     next_run = iter.get_next(datetime.datetime)
-    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt_text, schedule_text)
+    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt_id, schedule_text)
 
 def schedule_prompts():
     """
@@ -127,17 +146,20 @@ def schedule_prompts():
     schedule.clear()
     prompts = load_prompts()
     for prompt in prompts:
-        schedule_text = prompt.get("schedule")
-        if schedule_text:
-            if croniter.is_valid(schedule_text):
-                base = datetime.datetime.now()
-                iter = croniter(schedule_text, base)
-                next_run = iter.get_next(datetime.datetime)
-                schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt["prompt"], schedule_text)
-            else:
-                # Fallback to simple schedule parsing for now
-                if "every" in schedule_text and "minute" in schedule_text:
-                     schedule.every().minute.do(dispatch_prompt, prompt_text=prompt["prompt"])
+        # Only schedule prompts that are not part of a conversation,
+        # or are the first prompt in a conversation.
+        if not prompt.get("conversation_id") or prompt.get("is_first"):
+            schedule_text = prompt.get("schedule")
+            if schedule_text:
+                if croniter.is_valid(schedule_text):
+                    base = datetime.datetime.now()
+                    iter = croniter(schedule_text, base)
+                    next_run = iter.get_next(datetime.datetime)
+                    schedule.every().day.at(next_run.strftime("%H:%M")).do(run_and_reschedule, prompt["id"], schedule_text)
+                else:
+                    # Fallback to simple schedule parsing for now
+                    if "every" in schedule_text and "minute" in schedule_text:
+                         schedule.every().minute.do(dispatch_prompt, prompt_id=prompt["id"])
 
 def main():
     """
@@ -153,6 +175,16 @@ from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, DataTable, Button, Input, Label
 from textual.containers import Container
 from textual.screen import ModalScreen
+
+class ConversationScreen(ModalScreen):
+    """A modal screen for managing conversations."""
+
+    def compose(self) -> ComposeResult:
+        yield Container(
+            DataTable(id="conversation_table"),
+            Button("New Conversation", id="new_conversation"),
+            id="conversation_dialog",
+        )
 
 class EditScreen(ModalScreen):
     """A modal screen for editing a prompt."""
@@ -195,6 +227,7 @@ class CCC_TUI(App):
                 Input(placeholder="Enter new prompt..."),
                 Input(placeholder="Enter schedule (e.g., 'every_minute')"),
                 Button("Add Prompt", id="add_prompt"),
+                Button("Manage Conversations", id="manage_conversations"),
             ),
         )
         yield Footer()
@@ -277,6 +310,8 @@ class CCC_TUI(App):
                 prompt_input.value = ""
                 schedule_input.value = ""
                 self.notify("Prompt added successfully.")
+        elif event.button.id == "manage_conversations":
+            self.push_screen(ConversationScreen())
 
     def action_toggle_dark(self) -> None:
         """An action to toggle dark mode."""
