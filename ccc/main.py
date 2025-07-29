@@ -63,6 +63,25 @@ def list_prompts():
     """
     return load_prompts()
 
+def delete_prompt(prompt_index):
+    """
+    Deletes a prompt by its index.
+    """
+    prompts = load_prompts()
+    if 0 <= prompt_index < len(prompts):
+        prompts.pop(prompt_index)
+        save_prompts(prompts)
+
+def edit_prompt(prompt_index, new_prompt_text, new_schedule_text):
+    """
+    Edits a prompt by its index.
+    """
+    prompts = load_prompts()
+    if 0 <= prompt_index < len(prompts):
+        prompts[prompt_index]["prompt"] = new_prompt_text
+        prompts[prompt_index]["schedule"] = new_schedule_text
+        save_prompts(prompts)
+
 def schedule_prompts():
     """
     Schedules all prompts from the prompts file.
@@ -86,6 +105,33 @@ def main():
 from textual.app import App, ComposeResult
 from textual.widgets import Header, Footer, DataTable, Button, Input
 from textual.containers import Container
+from textual.screen import ModalScreen
+
+class EditScreen(ModalScreen):
+    """Screen with a dialog to edit a prompt."""
+
+    def __init__(self, prompt_index, prompt_text, schedule_text) -> None:
+        super().__init__()
+        self.prompt_index = prompt_index
+        self.prompt_text = prompt_text
+        self.schedule_text = schedule_text
+
+    def compose(self) -> ComposeResult:
+        yield Container(
+            Input(self.prompt_text, id="prompt_text"),
+            Input(self.schedule_text, id="schedule_text"),
+            Button("Save", id="save"),
+            Button("Cancel", id="cancel"),
+            id="dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            prompt_text = self.query_one("#prompt_text").value
+            schedule_text = self.query_one("#schedule_text").value
+            self.dismiss((self.prompt_index, prompt_text, schedule_text))
+        else:
+            self.dismiss()
 
 class CCC_TUI(App):
     """A Textual app to manage Claude Code Companion prompts."""
@@ -96,17 +142,21 @@ class CCC_TUI(App):
         """Create child widgets for the app."""
         yield Header()
         yield Footer()
+from textual.containers import VerticalScroll
+
         yield Container(
             DataTable(),
-            Input(placeholder="Enter new prompt..."),
-            Input(placeholder="Enter schedule (e.g., 'every_minute')"),
-            Button("Add Prompt", id="add_prompt"),
+            VerticalScroll(
+                Input(placeholder="Enter new prompt..."),
+                Input(placeholder="Enter schedule (e.g., 'every_minute')"),
+                Button("Add Prompt", id="add_prompt"),
+            ),
         )
 
     def on_mount(self) -> None:
         """Called when the app is mounted."""
         table = self.query_one(DataTable)
-        table.add_columns("Prompt", "Schedule")
+        table.add_columns("Prompt", "Schedule", "Actions")
         self.update_table()
 
     def update_table(self):
@@ -114,8 +164,35 @@ class CCC_TUI(App):
         table = self.query_one(DataTable)
         table.clear()
         prompts = list_prompts()
-        for prompt in prompts:
-            table.add_row(prompt["prompt"], prompt["schedule"])
+        for i, prompt in enumerate(prompts):
+            table.add_row(
+                prompt["prompt"],
+                prompt["schedule"],
+                f"[link=edit:{i}]Edit[/link] | [link=delete:{i}]Delete[/link]",
+            )
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        """Event handler for cell selection."""
+        if event.cell_key.column_key == "Actions":
+            action, index_str = event.value.split(":")
+            index = int(index_str)
+            if action == "delete":
+                delete_prompt(index)
+                self.update_table()
+            elif action == "edit":
+                prompts = list_prompts()
+                prompt_to_edit = prompts[index]
+                self.push_screen(
+                    EditScreen(index, prompt_to_edit["prompt"], prompt_to_edit["schedule"]),
+                    self.on_edit_screen_dismiss,
+                )
+
+    def on_edit_screen_dismiss(self, result) -> None:
+        """Called when the EditScreen is dismissed."""
+        if result:
+            index, prompt_text, schedule_text = result
+            edit_prompt(index, prompt_text, schedule_text)
+            self.update_table()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Event handler called when a button is pressed."""
