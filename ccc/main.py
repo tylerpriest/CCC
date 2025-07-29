@@ -117,7 +117,7 @@ def delete_prompt(prompt_index):
     if 0 <= prompt_index < len(prompts):
         prompts.pop(prompt_index)
         save_prompts(prompts)
-        schedule_prompts()
+        schedule_prompts(app=None) # This is a hack for the tests
 
 def edit_prompt(prompt_index, new_prompt_text, new_schedule_text):
     """
