@@ -1,3 +1,2 @@
-{"prompt": "Summarize the top 5 news headlines from today.", "schedule": "daily at 08:00"}
-{"prompt": "Write a python script to organize my downloads folder.", "schedule": "every sunday at 20:00"}
-{"prompt": "What are some interesting new AI research papers?", "schedule": "every friday at 10:00"}
+{"prompt": "Test prompt 1", "schedule": "* * * * *"}
+{"prompt": "Test prompt 2", "schedule": "0 0 * * *"}
