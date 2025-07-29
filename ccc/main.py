@@ -1,3 +1,4 @@
+import configparser
 import schedule
 import time
 import subprocess
@@ -5,29 +6,50 @@ import json
 import logging
 from pathlib import Path
 
-# Setup logging
-logging.basicConfig(filename='responses.log', level=logging.INFO,
-                    format='%(asctime)s - %(message)s')
+def load_config():
+    """
+    Loads the configuration from config.ini.
+    """
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+    return config
 
-PROMPTS_FILE = Path("prompts.jsonl")
+config = load_config()
+
+# Setup logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create a file handler
+handler = logging.FileHandler(config['DEFAULT']['log_file'])
+handler.setLevel(logging.INFO)
+
+# Create a logging format
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+# Add the handlers to the logger
+logger.addHandler(handler)
+
+PROMPTS_FILE = Path(config['DEFAULT']['prompts_file'])
 
 def dispatch_prompt(prompt_text):
     """
     Dispatches a prompt to the Claude Code CLI.
     """
-    logging.info(f"Dispatching prompt: {prompt_text}")
+    logger.info(f"Dispatching prompt: {prompt_text}")
     try:
         # Assuming 'claude' is in the system's PATH
         result = subprocess.run(['claude', 'code', '-p', prompt_text],
                                 capture_output=True, text=True, check=True)
         response = result.stdout
-        logging.info(f"Received response: {response}")
+        logger.info(f"Received response: {response}")
     except FileNotFoundError:
-        logging.error("The 'claude' command was not found.")
-        logging.error("Please ensure the Claude Code CLI is installed and in your PATH.")
+        logger.error("The 'claude' command was not found.")
+        logger.error("Please ensure the Claude Code CLI is installed and in your PATH.")
     except subprocess.CalledProcessError as e:
-        logging.error(f"Error calling Claude Code CLI: {e}")
-        logging.error(f"Stderr: {e.stderr}")
+        logger.error(f"Error calling Claude Code CLI: {e}")
+        logger.error(f"Stderr: {e.stderr}")
 
 
 def load_prompts():
