@@ -33,6 +33,10 @@ These two components run in separate threads, allowing the user to interact with
 - **Priority Levels:** The ability to assign priority levels to prompts.
 - **Tagging:** The ability to tag prompts for better organization and filtering.
 
+## User Acceptance Testing
+
+For details on User Acceptance Testing (UAT), please see the [`UAT.md`](UAT.md) file.
+
 ## User Journey
 
 A typical user journey for the Claude Code Companion is as follows:
